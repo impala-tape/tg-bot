@@ -13,7 +13,7 @@ def create_db():
                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
                          name TEXT NOT NULL UNIQUE,
                          price REAL NOT NULL,
-                         duration_days INTEGER NOT NULL)''')
+                         period_type INTEGER NOT NULL)''')
         
         # Таблица с клиентами
         cursor.execute('''CREATE TABLE IF NOT EXISTS clients
@@ -26,12 +26,13 @@ def create_db():
 
         
         cursor.execute("SELECT COUNT(*) FROM tariffs")
+        # В функции create_db() исправляем:
         if cursor.fetchone()[0] == 0:
             tariffs = [
                 ('1 Day', 1.99, 'day'),
                 ('1 Month', 5.99, 'month'),
                 ('1 Year', 49.99, 'year')
-            ]
+        ]
         cursor.executemany(
             "INSERT INTO tariffs (name, price, period_type) VALUES (?, ?, ?)",
             tariffs

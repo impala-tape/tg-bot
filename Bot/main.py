@@ -142,7 +142,7 @@ async def process_tariff(message: types.Message, state: FSMContext):
     tariff_name = message.text.split(' - ')[0]
     conn = sqlite3.connect('vpn.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tariffs WHERE name=?", (tariff_name,))
+    cursor.execute("SELECT id, price, period_type FROM tariffs WHERE name=?", (tariff_name,))
     tariff = cursor.fetchone()
     conn.close()
     
@@ -151,7 +151,7 @@ async def process_tariff(message: types.Message, state: FSMContext):
         await state.clear()
         return
     
-    await state.update_data(tariff_id=tariff[0], days=tariff[3])
+    await state.update_data(tariff_id=tariff[0], price=tariff[1], period_type=tariff[2])
     
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[
@@ -172,7 +172,15 @@ async def process_payment(message: types.Message, state: FSMContext):
     data = await state.get_data()
     
     try:
-        expiry_date = (datetime.now() + timedelta(days=data['days'])).strftime("%Y-%m-%d")
+        conn = sqlite3.connect('vpn.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT period_type FROM tariffs WHERE id = ?", (data['tariff_id'],))
+        period_type = cursor.fetchone()[0]
+        conn.close()
+
+        purchase_date = datetime.now()
+        expiry_date = calculate_expiry_date(purchase_date, period_type)
+
         ip_suffix = message.from_user.id % 254 + 1
         
         config = f"""[Interface]
@@ -194,7 +202,7 @@ PersistentKeepalive = 25
             "private_key": "0"*44,
             "public_key": "0"*44,
             "preshared_key": "0"*44,
-            "expiry_date": expiry_date
+            "expiry_date": expiry_date.isoformat()
         }
         
         await save_client_config(message.from_user.id, config_data)
@@ -204,25 +212,27 @@ PersistentKeepalive = 25
                 config.encode('utf-8'),
                 filename=f"wg_{message.from_user.id}.conf"
             ),
-            caption=f"⚠️ TEST CONFIG (non-working)\nValid until: {expiry_date}",
+            caption=f"⚠️ TEST CONFIG (non-working)\nValid until: {expiry_date.strftime('%Y-%m-%d')}",
             reply_markup=get_main_keyboard()
         )
         
     except Exception as e:
-        logging.error(f"Config generation error: {str(e)}")
+        logging.error(f"Config generation error: {str(e)}", exc_info=True)
         await message.answer("Error generating config", reply_markup=get_main_keyboard())
     
     await state.clear()
 
-def calculate_expiry_date(start_date: datetime, period_type: str) -> datetime:
-    if period_type == 'day':
-        return start_date + timedelta(days=1)
-    elif period_type == 'month':
-        return start_date + relativedelta(months=1)
-    elif period_type == 'year':
-        return start_date + relativedelta(years=1)
-    else:
-        raise ValueError("Unknown period type")
+def calculate_expiry_date(start_date: datetime, period_type: int) -> datetime:
+    """Рассчитывает дату окончания по типу периода"""
+    match period_type:
+        case 1:  # День
+            return start_date + timedelta(days=1)
+        case 2:  # Месяц
+            return start_date + relativedelta(months=1, day=start_date.day)
+        case 3:  # Год
+            return start_date + relativedelta(years=1)
+        case _:
+            raise ValueError(f"Unknown period type: {period_type}")
 
 async def shutdown(bot: Bot):
     await bot.session.close()
